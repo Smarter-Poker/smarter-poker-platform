@@ -162,3 +162,44 @@ in the previous bill — it was being re-fetched after every 24h TTL expired
 for every active session. Now pinned to `max-age=31536000, immutable`, the
 file transfers **at most once per year per cache key**. Same transition applies
 to the `/cards/*` sprite sheets and `/sounds/*` SFX bundles.
+
+---
+
+## 5. Cron Client Consolidation — World Hub (2026-04-19, commit 64f4a747e)
+
+**Why:** Task #25 was marked done but the helper at `lib/supabaseAdmin.ts`
+had never been wired into consumers. 35 cron handlers were each inlining
+their own `createClient` + env-fallback boilerplate. Consequences:
+
+1. Every cron crashed with its own "missing env" error shape.
+2. Every invocation opened its own Supabase socket pool.
+3. The GoTrue `getUser` patch (`src/lib/supabaseServerClient`) was
+   duplicated across 30+ files.
+4. `venue-review-prompts.js` was bypassing the patch entirely by importing
+   directly from `@supabase/supabase-js`.
+
+**Changes:** All 35 cron files under `pages/api/cron/` now import
+`getSupabaseAdmin` from `../../../lib/supabaseAdmin` and call it
+(memoized) instead of constructing their own client. Three variants were
+collapsed:
+
+| Original pattern | Replacement |
+|---|---|
+| `let _supabase = null; function getSupabase() {…}` | `const getSupabase = getSupabaseAdmin;` |
+| Module-level `const supabaseAdmin = createClient(…)` | `const supabaseAdmin = getSupabaseAdmin();` |
+| Handler-scoped `createClient(url, key)` | `const supabase = getSupabaseAdmin();` |
+| Pre-existing `getSupabaseAdmin` local helper (scheduled-table-opener) | Import collides — drop local helper, use imported |
+
+**Net diff:** -264 lines of duplicated boilerplate (35 files changed,
++78/-342).
+
+**Side benefits:**
+- Env-misconfig now fails loudly at import time for all crons.
+- A single Supabase socket pool serves the whole function invocation
+  (prior 35 pools × cold-start penalties eliminated).
+- `supabaseAdmin.ts` is now the only place the GoTrue `getUser` patch
+  has to be maintained.
+
+**Verification:** All 37 cron files parse cleanly via `@babel/parser`
+(`sourceType: module`). Production deploy dpl_jmxFShVTNFSzHdvHZ8utmoYB6vNf
+builds on commit 64f4a747e.
