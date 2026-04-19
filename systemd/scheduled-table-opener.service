@@ -1,0 +1,18 @@
+[Unit]
+Description=smarter.poker scheduled-table-opener cron (migrated off Vercel */5 cron)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/smarter-poker/cron.env
+ExecStart=/opt/smarter-poker-platform/scripts/scheduled-table-opener-runner.sh
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=140
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/smarter-poker

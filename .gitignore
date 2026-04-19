@@ -1,0 +1,23 @@
+# Local clones of the env file that holds CRON_SECRET etc.
+cron.env
+/etc/smarter-poker/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / Python helpers (in case any land here later)
+node_modules/
+npm-debug.log*
+__pycache__/
+*.py[cod]
+.venv/
+
+# Tombstones from sandbox soft-delete
+*.dead

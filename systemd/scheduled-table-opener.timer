@@ -1,0 +1,13 @@
+[Unit]
+Description=Run smarter.poker scheduled-table-opener every 5 minutes
+
+[Timer]
+# Replaces Vercel cron: */5 * * * *
+OnBootSec=90s
+OnCalendar=*:0/5
+AccuracySec=10s
+Unit=scheduled-table-opener.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

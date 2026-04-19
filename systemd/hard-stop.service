@@ -1,0 +1,19 @@
+[Unit]
+Description=smarter.poker hard-stop cron (migrated off Vercel every-minute cron)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/smarter-poker/cron.env
+ExecStart=/opt/smarter-poker-platform/scripts/hard-stop-runner.sh
+StandardOutput=journal
+StandardError=journal
+Nice=0
+TimeoutStartSec=50
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/smarter-poker
