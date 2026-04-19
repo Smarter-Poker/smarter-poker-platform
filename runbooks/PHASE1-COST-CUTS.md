@@ -141,3 +141,24 @@ curl -sI https://smarter.poker/api/poker/venues | grep -i cache-control
 
 Vercel auto-deploys from `main`; wait ~90 seconds after push for the edge
 to pick up the new headers.
+
+### Post-deploy verification (commit d3fab5988 → dpl_3LS6YkzTP8vA8 → READY 2026-04-19 ~19:45 UTC)
+
+All five target header behaviors confirmed via `curl -sI`:
+
+| URL | Expected | Actual | Verdict |
+|---|---|---|---|
+| `/hub/club-arena/poker-chip-logo.png` | max-age=2592000, swr=86400 | `public, max-age=2592000, stale-while-revalidate=86400` | PASS (x-vercel-cache: HIT) |
+| `/hub/club-arena/videos/club-arena-intro.mp4` | max-age=31536000, immutable | `public, max-age=31536000, immutable` | PASS (HIT) |
+| `/hub/club-arena/images/auth-frame.webp` | max-age=2592000, swr=86400 | `public, max-age=2592000, stale-while-revalidate=86400` | PASS (HIT) |
+| `/api/training/leaderboard` | s-maxage=60, swr=300 | `public, s-maxage=60, stale-while-revalidate=300` | PASS (MISS on first hit, Pragma stripped) |
+| `/api/arcade/leaderboard` | s-maxage=60, swr=300 | `public, s-maxage=60, stale-while-revalidate=300` | PASS (HIT) |
+| `/api/poker/daily-tournaments` | s-maxage=120, swr=600 | `public, s-maxage=120, stale-while-revalidate=600` | PASS |
+| `/api/poker/venues` | STAY no-store | `no-store, no-cache, must-revalidate, proxy-revalidate` | PASS (preserved for freshness) |
+| `/hub/dashboard` | STAY no-cache | `no-cache, no-store, must-revalidate` | PASS (HTML freshness preserved) |
+
+The 3.4 MB `club-arena-intro.mp4` was the single biggest bandwidth offender
+in the previous bill — it was being re-fetched after every 24h TTL expired
+for every active session. Now pinned to `max-age=31536000, immutable`, the
+file transfers **at most once per year per cache key**. Same transition applies
+to the `/cards/*` sprite sheets and `/sounds/*` SFX bundles.
