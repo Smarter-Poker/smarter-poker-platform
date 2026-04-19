@@ -58,3 +58,86 @@ Any individual change is self-contained and revertable:
 - Migrate the remaining aggressive horses-* and scrape-* crons onto Hetzner.
 - Phase 3/4: refactor hand_histories / wallet_transactions / rake_history off realtime subscriptions.
 - Cache headers audit for /hub/club-arena/ 3D assets and /_next/image.
+
+---
+
+## 4. Cache Header Audit — World Hub (2026-04-19, commit d3fab5988)
+
+**Driver:** Vercel invoice line item *Fast Data Transfer: 229 GB @ \$36.95*.
+Audit traced the egress to three root causes in the World Hub's `vercel.json`
+and `next.config.js`:
+
+1. **Flat-file static assets** under `/hub/:orb/*.{png,jpg,webp,svg,ico,mp4,...}`
+   were falling through every subdir-specific cache rule and landing on the
+   universal `/hub/...` negative-lookahead catchall, which emits
+   `Cache-Control: no-cache, no-store, must-revalidate`. Every refresh of a
+   page referencing `/hub/club-arena/poker-chip-logo.png` or similar flat
+   assets re-paid the origin fetch.
+2. **Public API endpoints** that are *by design* idempotent (public/*,
+   poker/daily-tournaments, training/leaderboard, arcade/leaderboard) were
+   matched by the universal `/api/(.*)` `no-store` rule and never cached at
+   the edge. These routes fan out on every page load.
+3. **`next/image` minimumCacheTTL = 3600** (1 hour). The optimized
+   `/_next/image` pipeline (AVIF/WebP) was re-running for the same avatar /
+   venue / art asset on every edge cold hit. 1-hour expiry was burning
+   Image Optimization bandwidth.
+
+**Changes (commit d3fab5988):**
+
+| Target | Before | After |
+|---|---|---|
+| `/hub/:orb*/images/*` | `max-age=86400, swr=3600` | `max-age=2592000, swr=86400` |
+| `/hub/:orb*/videos/*` | `max-age=86400, swr=3600` | `max-age=31536000, immutable` |
+| `/hub/:orb*/cards/*` | `max-age=86400, swr=3600` | `max-age=31536000, immutable` |
+| `/hub/:orb*/sounds/*` | `max-age=86400, swr=3600` | `max-age=31536000, immutable` |
+| `/hub/:orb*/club-logos/*` | `max-age=3600, swr=600` | `max-age=2592000, swr=86400` |
+| Flat `/hub/.../*.{png,jpg,webp,svg,ico}` | catchall `no-store` | `max-age=2592000, swr=86400` |
+| Flat `/hub/.../*.{woff2,woff,ttf,mp4,webm,mp3}` | catchall `no-store` | `max-age=31536000, immutable` |
+| `/api/public/*` | `no-store` | `s-maxage=60, swr=300` |
+| `/api/poker/daily-tournaments` | `no-store` | `s-maxage=120, swr=600` |
+| `/api/training/leaderboard` | `no-store` | `s-maxage=60, swr=300` |
+| `/api/arcade/leaderboard` | `no-store` | `s-maxage=60, swr=300` |
+| `next/image` minimumCacheTTL | 3600 (1h) | 2592000 (30d) |
+
+**Rationale for immutable on videos/cards/sounds:**
+These assets are published with versioned paths managed by the
+content-deploy pipeline; they are never overwritten in place. Setting
+`max-age=31536000, immutable` lets Vercel's edge + browser caches hold
+them for the full year, reducing repeat downloads to zero for returning
+visitors.
+
+**Rationale NOT caching `/api/poker/venues`:**
+Venues is location-sensitive and the service worker comment in
+`next.config.js` flagged it as must-always-be-fresh ("stale causes 0-venue
+blank page"). Left on `no-store`.
+
+**Expected bandwidth reduction:**
+The three largest bandwidth consumers on a typical session (3D textures,
+card sprite sheets, SFX/voice clips) now transfer **once per year** instead
+of once per day. Videos are the single largest line item —
+`public/hub/club-arena/videos/` totals ~40 MB and was being re-fetched on
+most table opens. Projected: **60-75% reduction** in Fast Data Transfer,
+taking the monthly charge from ~\$36.95 toward ~\$10-14.
+
+**Verification (run after next deploy):**
+
+```bash
+# Flat asset should now be cacheable
+curl -sI https://smarter.poker/hub/club-arena/poker-chip-logo.png | grep -i cache-control
+# Expect: public, max-age=2592000, stale-while-revalidate=86400
+
+# Public API should now be edge-cacheable
+curl -sI https://smarter.poker/api/training/leaderboard | grep -i cache-control
+# Expect: public, s-maxage=60, stale-while-revalidate=300
+
+# Hub HTML page should still be no-cache (freshness-critical)
+curl -sI https://smarter.poker/hub/dashboard | grep -i cache-control
+# Expect: no-cache, no-store, must-revalidate
+
+# Venues still no-store (location-sensitive)
+curl -sI https://smarter.poker/api/poker/venues | grep -i cache-control
+# Expect: no-store, no-cache
+```
+
+Vercel auto-deploys from `main`; wait ~90 seconds after push for the edge
+to pick up the new headers.
