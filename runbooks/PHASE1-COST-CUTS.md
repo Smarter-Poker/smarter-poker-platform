@@ -204,7 +204,24 @@ collapsed:
 (`sourceType: module`). Production deploy dpl_jmxFShVTNFSzHdvHZ8utmoYB6vNf
 builds on commit 64f4a747e.
 
-## 6. Realtime Publication Trim — DEFERRED (blocked on client refactor)
+## 6. Realtime Publication Trim — ✅ COMPLETED 2026-04-19
+
+**Delivered.**
+- Client refactor (commit `b4f1cea3` on Smarter-Poker-Club-Arena, commit `435a485e4` on Smarter-Poker-World-Hub with dist bundled) removed `postgres_changes` subscriptions on `hand_history`, `wallet_transactions`, `rake_history` across the 8 pages listed below.
+- World Hub deploy `dpl_9y9YRjkLrq1bocRd7YsNyY8znHQo` READY on https://smarter.poker at 23:12 UTC.
+- Supabase migration `phase2_drop_realtime_publication_tables` applied; post-state query confirms zero entries for the three tables in `pg_publication_tables`.
+
+**Simplification of original plan.** The original plan called for broadcast-channel or polling replacements before the publication drop. In practice the existing `masterBus` event system (`HAND_COMPLETED`, `BALANCE_UPDATED`, `CHIPS_ADDED/WITHDRAWN`, `COMMISSION_PAID`, `SETTLEMENT_COMPLETED`, `WALLET_REFRESHED`, etc.) plus `useVisibilityRefresh` tab-focus hook already covered every refresh path. No broadcast channel or polling loop was added — the `postgres_changes` subscriptions were simply deleted. This is the lightest possible migration and depends on every write-side call site continuing to emit its corresponding bus event (verified by grep).
+
+**Verification.**
+- Live bundle smoke test: `curl https://smarter.poker/hub/club-arena/assets/{HandHistoryPage,CashierPage,RakebackDashboard,PlayerWalletPage}-*-v6.js | grep -oE 'table:["'"'"']+(hand_history|wallet_transactions|rake_history)["'"'"']+'` → empty for all four.
+- Supabase: `SELECT tablename FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename IN ('hand_history','wallet_transactions','rake_history')` → `[]`.
+
+**Expected savings.** These three tables were the top write-volume items in the audit (~40% of realtime egress). Full impact visible in Supabase usage dashboard after ~24 h.
+
+---
+
+## 6.OLD. Original Plan (DEFERRED — superseded by section 6 above)
 
 **Goal.** Drop three high-write tables (`hand_history`, `wallet_transactions`, `rake_history`) from the `supabase_realtime` publication. Audit cites these three as ~40% of realtime egress.
 
