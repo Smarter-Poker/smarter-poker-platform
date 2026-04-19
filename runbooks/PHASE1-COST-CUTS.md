@@ -203,3 +203,44 @@ collapsed:
 **Verification:** All 37 cron files parse cleanly via `@babel/parser`
 (`sourceType: module`). Production deploy dpl_jmxFShVTNFSzHdvHZ8utmoYB6vNf
 builds on commit 64f4a747e.
+
+## 6. Realtime Publication Trim — DEFERRED (blocked on client refactor)
+
+**Goal.** Drop three high-write tables (`hand_history`, `wallet_transactions`, `rake_history`) from the `supabase_realtime` publication. Audit cites these three as ~40% of realtime egress.
+
+**Why deferred.** The Club Arena client still relies on `postgres_changes` subscriptions to these tables on 8 pages:
+
+| Page | Table | File:line |
+|---|---|---|
+| ClubDashboard | hand_history | src/pages/club/ClubDashboard.tsx:151 |
+| PlayerWalletPage | wallet_transactions | src/pages/PlayerWalletPage.tsx:253 |
+| AgentManagementPage | wallet_transactions | src/pages/AgentManagementPage.tsx:266 |
+| RakebackDashboard | wallet_transactions | src/pages/RakebackDashboard.tsx:93 |
+| ClubFinancialsPage | wallet_transactions | src/pages/ClubFinancialsPage.tsx:138 |
+| ClubFinancialsPage | rake_history | src/pages/ClubFinancialsPage.tsx:150 |
+| HandHistoryPage | hand_history | src/pages/HandHistoryPage.tsx:124 |
+| PlayerStatsPage | hand_history | src/pages/PlayerStatsPage.tsx:277 |
+| CashierPage | wallet_transactions | src/pages/CashierPage.tsx:708 |
+
+Dropping the publication membership first would make those live updates fall silent — users would see stale balances/hand counts until they manually refresh.
+
+**Migration pattern per page.** Two equivalent paths, pick per site:
+
+1. **Broadcast channel driven by DB trigger.** Add a row-level `AFTER INSERT/UPDATE` trigger on the table that publishes a small event to `realtime.broadcast_changes('<channel>', <scope>)`. Clients subscribe to `channel` instead of `postgres_changes` — payload is chosen by us, not the whole row. Cuts egress by ≥10× because we only send {user_id, balance_delta} instead of the whole wallet_transactions row.
+
+2. **Interval refetch.** `useEffect` with a 5-10s polling loop + visibility-aware pause. Simpler, but trades realtime for eventual-consistency. Fine for analytics pages (RakebackDashboard, ClubFinancials), wrong for balance-sensitive pages (PlayerWallet, Cashier).
+
+**Recommended split.**
+- Balance pages → broadcast channel (PlayerWallet, Cashier, AgentManagement).
+- Analytics pages → polling (ClubDashboard, PlayerStats, HandHistory, RakebackDashboard, ClubFinancials).
+
+**Rollout.** Ship the client changes first, let them run for 24 h, then drop the three tables from the publication.
+
+```sql
+-- Run AFTER client refactors are live in production for 24 h:
+ALTER PUBLICATION supabase_realtime DROP TABLE public.hand_history;
+ALTER PUBLICATION supabase_realtime DROP TABLE public.wallet_transactions;
+ALTER PUBLICATION supabase_realtime DROP TABLE public.rake_history;
+```
+
+Tracked as task #40 (Club Arena client refactor) → #39 (publication drop).
